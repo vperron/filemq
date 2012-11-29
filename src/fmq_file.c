@@ -521,8 +521,6 @@ fmq_file_test (bool verbose)
     assert (fmq_chunk_size (chunk) == 1000100);
     fmq_chunk_destroy (&chunk);
     fmq_file_destroy (&link);
-    fmq_file_close (file);		// win32 can't delete open files
-
     //  Remove file and directory
     fmq_dir_t *dir = fmq_dir_new ("./this", NULL);
     assert (fmq_dir_size (dir) == 2000200);
