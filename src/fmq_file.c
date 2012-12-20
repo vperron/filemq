@@ -39,6 +39,7 @@ struct _fmq_file_t {
     //  Other properties
     bool exists;            //  true if file exists
     bool stable;            //  true if file is stable
+    bool eof;               //  true if at end of file
     FILE *handle;           //  Read/write handle
 };
 
@@ -186,7 +187,12 @@ fmq_file_restat (fmq_file_t *self)
         self->mode = stat_buf.st_mode;
 #endif
         //  File is 'stable' if more than 1 second old
+#if (defined (WIN32))
+#define EPOCH_DIFFERENCE 11644473600LL
+        long age = (long) (zclock_time () - EPOCH_DIFFERENCE * 1000 - (self->time * 1000));
+#else
         long age = (long) (zclock_time () - (self->time * 1000));
+#endif
         self->stable = age > 1000;
     }
     else
@@ -277,10 +283,10 @@ s_assert_path (fmq_file_t *self)
         if (slash)
             *slash = 0;         //  Cut at slash
         mode_t mode = s_file_mode (path);
-        if (mode == -1) {
+        if (mode == (mode_t)-1) {
             //  Does not exist, try to create it
 #if (defined (WIN32))
-            if (CreateDirectory (path, NULL))
+            if (!CreateDirectory (path, NULL))
 #else
             if (mkdir (path, 0775))
 #endif
@@ -354,7 +360,7 @@ fmq_file_output (fmq_file_t *self)
 
 //  --------------------------------------------------------------------------
 //  Read chunk from file at specified position
-//  Zero-sized chunk means we're at the end of the file
+//  If this was the last chunk, sets self->eof
 //  Null chunk means there was another error
 
 fmq_chunk_t *
@@ -373,7 +379,11 @@ fmq_file_read (fmq_file_t *self, size_t bytes, off_t offset)
     if (rc == -1)
         return NULL;
 
-    return fmq_chunk_read (self->handle, bytes);
+    self->eof = false;
+    fmq_chunk_t *chunk = fmq_chunk_read (self->handle, bytes);
+    if (chunk)
+        self->eof = fmq_chunk_size (chunk) < bytes;
+    return chunk;
 }
 
 
@@ -511,7 +521,6 @@ fmq_file_test (bool verbose)
     assert (fmq_chunk_size (chunk) == 1000100);
     fmq_chunk_destroy (&chunk);
     fmq_file_destroy (&link);
-    
     //  Remove file and directory
     fmq_dir_t *dir = fmq_dir_new ("./this", NULL);
     assert (fmq_dir_size (dir) == 2000200);

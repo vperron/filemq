@@ -295,6 +295,14 @@ struct _client_t {
     int64_t expires_at;         //  Server expires at
 };
 
+static void
+client_config_self (client_t *self)
+{
+    //  Get standard client configuration
+    self->heartbeat = atoi (
+        fmq_config_resolve (self->config, "client/heartbeat", "1")) * 1000;
+}
+
 static client_t *
 client_new (zctx_t *ctx, void *pipe)
 {
@@ -302,7 +310,7 @@ client_new (zctx_t *ctx, void *pipe)
     self->ctx = ctx;
     self->pipe = pipe;
     self->config = fmq_config_new ("root", NULL);
-    self->heartbeat = 1000;     //  1 second by default
+    client_config_self (self);
     self->subs = zlist_new ();
     self->connected = false;  
     return self;
@@ -336,10 +344,6 @@ client_destroy (client_t **self_p)
 static void
 client_apply_config (client_t *self)
 {
-    //  Get standard client configuration
-    self->heartbeat = atoi (
-        fmq_config_resolve (self->config, "client/heartbeat", "1")) * 1000;
-
     //  Apply echo commands and class methods
     fmq_config_t *section = fmq_config_child (self->config);
     while (section) {
@@ -385,6 +389,7 @@ client_apply_config (client_t *self)
         }
         section = fmq_config_next (section);
     }
+    client_config_self (self);
 }
 
 //  Custom actions for state machine
@@ -485,11 +490,9 @@ process_the_patch (client_t *self)
         }                                                                             
         else {                                                                        
 					//  Zero-sized chunk means end of file, so report back to caller          
-					s_delivery_args *args = zmalloc(sizeof(s_delivery_args));
-					args->pipe = self->pipe;
-					args->inbox = strdup(inbox);
-					args->filename = strdup(filename);
-					zthread_new(s_notify_delivery, (void*)args);
+					zstr_sendm (self->pipe, "DELIVER");                                       
+					zstr_sendm (self->pipe, filename);                                        
+					zstr_sendf (self->pipe, "%s/%s", inbox, filename);                        
 					fmq_file_destroy (&self->file);                                           
         }                                                                             
         fmq_chunk_destroy (&chunk);                                                   
@@ -771,6 +774,7 @@ control_message (client_t *self)
         char *path = zmsg_popstr (msg);
         char *value = zmsg_popstr (msg);
         fmq_config_path_set (self->config, path, value);
+        client_config_self (self);
         free (path);
         free (value);
     }
@@ -870,7 +874,7 @@ fmq_client_test (bool verbose)
     assert (self);
     fmq_client_configure (self, "client_test.cfg");
     fmq_client_connect (self, "tcp://localhost:6001");
-    sleep (1);                                        
+    zclock_sleep (1000);
     fmq_client_destroy (&self);
 
     printf ("OK\n");
